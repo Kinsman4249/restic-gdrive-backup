@@ -255,11 +255,17 @@ OPTION 3: FULL REBUILD ON A FRESH VPS OR DISK (total loss)
   3. Sanity-check access:
        restic -r REPO --password-file KEYFILE snapshots
   4. Restore files. Two approaches:
-       a) Selective (recommended): restore /home, /etc, /root, /srv,
-          /var and friends into place while keeping the fresh system's
-          /boot and bootloader. Before rebooting, re-check that the
-          UUIDs in /etc/fstab match the NEW disk (compare blkid output
-          against the restored fstab; the old values are in blkid.txt).
+       a) Selective (recommended): restore your data into the working
+          fresh system while keeping its /boot, fstab, and network
+          settings. The installer automates exactly this safe path:
+          run it normally on the fresh system and accept the restore
+          offer at the end, or run at any time:
+            sudo bash ./install.sh --restore
+          In-place restores automatically protect boot files, fstab,
+          network settings, machine identity, and the new backup
+          configuration, so the restore cannot break the fresh system.
+          Old copies of protected files stay readable in the snapshot
+          (restic dump latest /etc/fstab) or via the staging option.
        b) Full clone: from rescue mode, give the new same-size disk the
           old layout (sfdisk /dev/vda < partition-table.sfdisk), make
           filesystems, restore everything with restic into them, give
