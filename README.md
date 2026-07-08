@@ -63,7 +63,7 @@ restic -r <your-repository> --password-file <key-file> dump latest /var/lib/rest
 ## Requirements
 
 - A Linux system with systemd
-- `restic`, `rclone`, and `curl` installed and in `PATH`
+- `restic`, `rclone`, and `curl` (the installer checks for them and offers to install any that are missing, using apt, dnf, yum, zypper, or pacman)
 - An rclone remote configured for your Google Drive **as root** (run `sudo rclone config`, name it `gdrive` or adjust the repository path during install)
 - A free or paid [smtp2go](https://www.smtp2go.com/) account with:
   - An API key (dashboard: Settings, then API Keys)
@@ -76,6 +76,8 @@ git clone https://github.com/Kinsman4249/restic-gdrive-backup.git
 cd restic-gdrive-backup
 sudo bash ./install.sh
 ```
+
+The installer first checks that `restic`, `rclone`, and `curl` are present. If any are missing, it detects your package manager and offers to install them, re-checking afterward and printing per-tool pointers if a package will not install.
 
 The installer asks for:
 
@@ -143,6 +145,8 @@ Note: smtp2go only delivers mail from senders you have verified. Verify your fro
 ## Troubleshooting
 
 The installer runs these checks itself and prints the same guidance when they fail.
+
+**A dependency will not install.** On RHEL, Alma, or Rocky, `restic` lives in the EPEL repository: `dnf install epel-release` first, then re-run the installer. If your distro's `rclone` is too old for Google Drive, current builds are at https://rclone.org/downloads/. A static `restic` binary from https://github.com/restic/restic/releases dropped into `/usr/local/bin` also works on any distro.
 
 **rclone remote not found.** rclone configs are per user, and the backup runs as root. If you configured the remote as your normal user, root cannot see it. Run `sudo rclone config` to create it for root, or copy your config: `sudo mkdir -p /root/.config/rclone && sudo cp ~/.config/rclone/rclone.conf /root/.config/rclone/`
 
