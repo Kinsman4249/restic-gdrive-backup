@@ -65,6 +65,7 @@ restic -r <your-repository> --password-file <key-file> dump latest /var/lib/rest
 - A Linux system with systemd
 - `restic`, `rclone`, and `curl` (the installer checks for them and offers to install any that are missing, using apt, dnf, yum, zypper, or pacman)
 - An rclone remote configured for your Google Drive **as root** (run `sudo rclone config`, name it `gdrive` or adjust the repository path during install)
+- If you plan to use your own Google OAuth client id (recommended by rclone for performance), set it up **before the first backup**: switching client ids later can hide the existing repository and in practice means re-initializing it and starting the backup history over (see Troubleshooting)
 - A free or paid [smtp2go](https://www.smtp2go.com/) account with:
   - An API key (dashboard: Settings, then API Keys)
   - A verified sender address or domain matching the from-address you configure
@@ -178,6 +179,22 @@ sudo bash -c 'source /etc/restic/backup.conf \
 
 A hand-run backup creates a real snapshot, but it does not update the last-success timestamp, prune old snapshots, or send failure alerts; the scheduled script handles those. The first backup uploads everything and can take hours; later runs only upload changes and are usually quick.
 
+## Health checks after the first backup
+
+Run through these once the first backup completes, and again after any change to the rclone remote, the keys, or the OAuth client. Ordered by how badly the failure bites:
+
+1. **Failure alerts really arrive.** Any failed run emails `[FAIL] ...` to your destination address; if you have had a failed run, confirm those emails landed (check spam the first time). If every run succeeded so far, force the watchdog once: set `STALE_MAX_DAYS="0"` in `/etc/restic/backup.conf`, run `sudo /usr/local/bin/restic-check-stale.sh`, confirm the email, set the value back.
+2. **Your off-machine key copy is good:** `sudo bash ./install.sh --test-key` and paste the saved copy.
+3. **You can actually restore:** `sudo bash ./install.sh --restore`, choose a staging folder, restore `/etc`, then list the folder and read a file or two.
+4. **The restore notes are inside the snapshot:** `sudo restic -r rclone:gdrive:backups/<hostname> --password-file /etc/restic/passphrase dump latest /var/lib/restic/bootloader/RESTORE-NOTES.txt | head`
+5. **Repository integrity:** same command form with `check` instead of `dump ...`; add `--read-data-subset=5%` to also download and verify a sample of the stored data.
+6. **Timers are armed:** `systemctl list-timers restic-backup.timer restic-check-stale.timer --no-pager` shows next-fire times for both.
+7. **Bootloader capture worked:** `sudo ls /var/lib/restic/bootloader/` shows `partition-table.sfdisk` and `first-1MiB.bin`, and no `WARNINGS.txt`.
+8. **Incrementals are cheap:** run `sudo /usr/local/bin/restic-backup.sh` a second time; it should finish quickly with mostly unmodified files.
+9. **Own OAuth client? Confirm production status.** In Google Cloud Console the consent screen must show "In production", not "Testing": testing tokens expire every 7 days and silently break unattended backups.
+
+If the system has a swapfile, add its path to `/etc/restic/excludes`; it is gigabytes of churn with no restore value.
+
 ## Troubleshooting
 
 The installer runs these checks itself and prints the same guidance when they fail.
@@ -207,7 +224,7 @@ sudo restic -r rclone:gdrive:backups/<hostname> --password-file /etc/restic/pass
 
 Right after install, step 3 shows only `config` and `keys/`, `restic snapshots` prints an empty list, and `rclone size` reports a few hundred bytes. That is the expected state: the timer fires once a day (around midnight plus up to 30 minutes of jitter), so no data transfers until the first backup runs. Start one by hand with `sudo /usr/local/bin/restic-backup.sh` and watch it move with the `rclone size` command from the Monitoring section. In the Google Drive web interface the backups live in My Drive under `backups/<hostname>` as encrypted restic files; if rclone lists them but the web interface shows nothing, check `sudo rclone config show gdrive` for a service account or shared drive setting, which stores files outside your personal My Drive.
 
-**"directory not found" when listing the repository folder, while `rclone about` works.** The token is fine but the remote now points somewhere the folder does not exist. This usually follows editing or reconnecting the remote, for one of three reasons: the scope is `drive.file` with a new client id (an app can only see files it created itself, so switching client id hides folders made by the old one; set `scope` to `drive` instead), the reauthorization picked a different Google account (check with `sudo rclone config userinfo gdrive:`), or a `root_folder_id` / shared drive setting points elsewhere (`sudo rclone config show gdrive`). After fixing the remote, re-run the verification steps; if the repository truly no longer exists, re-running the installer initializes a fresh one with your existing key. Also note: with your own client id, keep the OAuth consent screen app published (production status), because clients in Testing status get tokens that expire every 7 days, breaking unattended backups.
+**"directory not found" when listing the repository folder, while `rclone about` works.** The token is fine but the remote now points somewhere the folder does not exist. This usually follows editing or reconnecting the remote, for one of three reasons: the scope is `drive.file` with a new client id (an app can only see files it created itself, so switching client id hides folders made by the old one; set `scope` to `drive` instead), the reauthorization picked a different Google account (check with `sudo rclone config userinfo gdrive:`), or a `root_folder_id` / shared drive setting points elsewhere (`sudo rclone config show gdrive`). After fixing the remote, re-run the verification steps; if the repository truly no longer exists, re-running the installer initializes a fresh one with your existing key. The practical rule: switch from rclone's generic client id to your own BEFORE the first real backup. With a `drive.file`-style scope the old repository becomes invisible to the new client, so switching afterward generally means re-initializing the repository and starting the backup history over (a full `drive` scope with the same Google account usually survives the switch). Also note: with your own client id, keep the OAuth consent screen app published (production status), because clients in Testing status get tokens that expire every 7 days, breaking unattended backups.
 
 **restic cannot open the repository.** If the error mentions "already initialized" or "wrong password", the repository exists but your current key does not unlock it; restore the original key file. Otherwise check the repository path for typos and re-check the rclone steps above.
 
