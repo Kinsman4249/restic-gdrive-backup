@@ -18,7 +18,7 @@ assignees: ''
 ## Proposed solution (optional)
 
 <!-- If you have a specific idea for how to solve it, describe it here.
-     This is optional — sometimes the use case alone is enough to start a
+     This is optional - sometimes the use case alone is enough to start a
      discussion about the right approach. -->
 
 ## Alternatives considered

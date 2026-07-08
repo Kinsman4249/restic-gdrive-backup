@@ -8,7 +8,7 @@ In short:
 
 - Be respectful and professional in all project interactions.
 - Assume good faith. Disagree about ideas, not people.
-- Keep discussions focused on the project — issues, code, documentation, design.
+- Keep discussions focused on the project - issues, code, documentation, design.
 - Make space for contributors of every background and experience level.
 
 ## Scope
@@ -29,4 +29,4 @@ You will receive an acknowledgment, and the maintainer will follow up with next 
 
 ## Maintainer's note
 
-This is a small project. The intent of this document is to set a clear, friendly baseline for how we work together — not to be a legal instrument. If something feels off, raise it. We'd rather talk it through than ignore it.
+This is a small project. The intent of this document is to set a clear, friendly baseline for how we work together - not to be a legal instrument. If something feels off, raise it. We'd rather talk it through than ignore it.

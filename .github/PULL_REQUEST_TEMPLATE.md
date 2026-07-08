@@ -16,7 +16,7 @@
 
 How did you verify this works?
 
-- [ ] Ran project linters / type checks locally — clean
+- [ ] Ran project linters / type checks locally - clean
 - [ ] Tested the change end-to-end in a representative environment
 - [ ] Confirmed expected behavior for the happy path
 - [ ] Confirmed graceful behavior for the error path

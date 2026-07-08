@@ -14,12 +14,12 @@ Open an issue using the **Bug report** template. Please include:
 
 ## How to propose a feature
 
-Open an issue using the **Feature request** template. Describe the use case before the implementation — knowing *why* is more useful than *what* in early discussion.
+Open an issue using the **Feature request** template. Describe the use case before the implementation - knowing *why* is more useful than *what* in early discussion.
 
 ## How to submit a change
 
 1. **Fork** the repo and create a feature branch (`git checkout -b feat/short-description`).
-2. **Make your change.** Keep changes focused — one logical change per PR.
+2. **Make your change.** Keep changes focused - one logical change per PR.
 3. **Test it.** See the "Testing" section in the README for how to verify your change locally.
 4. **Lint it.** Run any project-specific linters or formatters before pushing.
 5. **Update documentation.** If your change alters user-visible behavior, update the README and any relevant docs (`docs/`, `CHANGELOG.md` under `[Unreleased]`, etc.).
@@ -29,7 +29,7 @@ Open an issue using the **Feature request** template. Describe the use case befo
 
 - Follow the style of the surrounding code. Match formatting, naming, and structure of existing files.
 - Comments should explain *why*, not *what*. The diff already shows what.
-- **No new dependencies** without strong justification — the appeal of small projects is the small, predictable surface area.
+- **No new dependencies** without strong justification - the appeal of small projects is the small, predictable surface area.
 - **No telemetry, ever.** This project must not phone home.
 
 ## Commit messages

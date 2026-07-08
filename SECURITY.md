@@ -31,6 +31,6 @@ In-scope:
 
 Out of scope:
 
-- Vulnerabilities in upstream dependencies — please report those to the dependency's own maintainers
-- Vulnerabilities in third-party services this project integrates with — report those to the service directly
+- Vulnerabilities in upstream dependencies - please report those to the dependency's own maintainers
+- Vulnerabilities in third-party services this project integrates with - report those to the service directly
 - General hardening suggestions for your own host or environment (use a feature request issue instead)
