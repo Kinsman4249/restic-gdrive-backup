@@ -46,7 +46,7 @@ SYSTEMD_DIR="/etc/systemd/system"
 
 # The settings this installer manages: it asks about them and writes them
 # back out to the config file at the end of every run.
-MANAGED_VARS="BACKUP_PATHS RESTIC_REPOSITORY RESTIC_PASSWORD_FILE EXCLUDE_FILE STATE_FILE LOG_FILE KEEP_DAILY KEEP_WEEKLY KEEP_MONTHLY STALE_MAX_DAYS ALERT_FROM ALERT_TO SMTP2GO_API_KEY_FILE SMTP2GO_API_URL"
+MANAGED_VARS="BACKUP_PATHS RESTIC_REPOSITORY RESTIC_PASSWORD_FILE EXCLUDE_FILE STATE_FILE LOG_FILE KEEP_DAILY KEEP_WEEKLY KEEP_MONTHLY STALE_MAX_DAYS ALERT_FROM ALERT_TO SMTP2GO_API_KEY_FILE SMTP2GO_API_URL BOOTLOADER_BACKUP_DIR"
 # Settings the old SMTP version of this project used. They are retired:
 # recognized during upgrades, then dropped when the config is rewritten.
 LEGACY_VARS="SMTP2GO_HOST SMTP2GO_PORT SMTP2GO_USER SMTP2GO_PASS_FILE"
@@ -295,6 +295,10 @@ fi
 : "${EXCLUDE_FILE:=/etc/restic/excludes}"
 : "${STATE_FILE:=/var/lib/restic/last_success}"
 : "${LOG_FILE:=/var/log/restic-backup.log}"
+# Folder the backup script refreshes before every run with bootloader
+# and disk layout dumps plus restore notes. It is always included in
+# the backup, even when BACKUP_PATHS does not cover it.
+: "${BOOTLOADER_BACKUP_DIR:=/var/lib/restic/bootloader}"
 # Source (from) and destination (to) addresses for alert emails.
 # The from-address must be a sender you have verified in your smtp2go
 # account, or smtp2go will refuse to send.
@@ -412,6 +416,7 @@ ALERT_FROM="$ALERT_FROM"
 ALERT_TO="$ALERT_TO"
 SMTP2GO_API_KEY_FILE="$SMTP2GO_API_KEY_FILE"
 SMTP2GO_API_URL="$SMTP2GO_API_URL"
+BOOTLOADER_BACKUP_DIR="$BOOTLOADER_BACKUP_DIR"
 EOF
 
 # Carry over any custom lines from the previous config, so a re-run of
