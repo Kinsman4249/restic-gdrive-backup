@@ -188,6 +188,25 @@ The installer runs these checks itself and prints the same guidance when they fa
 
 **rclone cannot reach Google Drive.** Usually an expired Google authorization. The installer offers to refresh it during the check; by hand, run `sudo rclone config reconnect gdrive:` and confirm basic connectivity with `curl -sI https://www.googleapis.com | head -1`
 
+**Verifying the Google Drive connection / "I cannot see anything".** Prove each layer in order, always with sudo (the rclone config and key belong to root), and always using the exact repository path from your config rather than retyping it (a near-miss path silently lists an empty folder):
+
+```bash
+# 1. The authoritative repository path
+sudo grep RESTIC_REPOSITORY /etc/restic/backup.conf
+
+# 2. Token and API access: prints your Drive quota only if auth works
+sudo rclone about gdrive:
+
+# 3. What is actually in the repository folder
+#    (for RESTIC_REPOSITORY="rclone:gdrive:backups/myhost" use gdrive:backups/myhost)
+sudo rclone lsf gdrive:backups/<hostname>
+
+# 4. restic can open and decrypt the repository end to end
+sudo restic -r rclone:gdrive:backups/<hostname> --password-file /etc/restic/passphrase cat config
+```
+
+Right after install, step 3 shows only `config` and `keys/`, `restic snapshots` prints an empty list, and `rclone size` reports a few hundred bytes. That is the expected state: the timer fires once a day (around midnight plus up to 30 minutes of jitter), so no data transfers until the first backup runs. Start one by hand with `sudo /usr/local/bin/restic-backup.sh` and watch it move with the `rclone size` command from the Monitoring section. In the Google Drive web interface the backups live in My Drive under `backups/<hostname>` as encrypted restic files; if rclone lists them but the web interface shows nothing, check `sudo rclone config show gdrive` for a service account or shared drive setting, which stores files outside your personal My Drive.
+
 **restic cannot open the repository.** If the error mentions "already initialized" or "wrong password", the repository exists but your current key does not unlock it; restore the original key file. Otherwise check the repository path for typos and re-check the rclone steps above.
 
 **smtp2go rejects the test email.** Check the API key (smtp2go dashboard: Settings, then API Keys), make sure the from-address is a verified sender or on a verified domain, and confirm the machine can reach `https://api.smtp2go.com`. Backups still run without alerts, but you will not hear about failures.
