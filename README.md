@@ -11,6 +11,7 @@ Backups are encrypted on your machine before anything is uploaded. Google only e
 - Prunes old snapshots automatically using a keep-daily / keep-weekly / keep-monthly policy
 - Emails you when a backup or prune fails
 - Runs a twice-daily watchdog that emails you if no backup has succeeded in N days (the failure mode you would otherwise never notice)
+- Captures the bootloader and disk layout before every backup (partition table, MBR boot code, filesystem UUIDs, GRUB config, boot mode), together with written restore notes that travel inside the backup
 - Checks the Google Drive connection, the repository, and alert delivery during install, with plain troubleshooting steps when something fails
 
 ## How it works
@@ -48,6 +49,16 @@ sudo bash ./install.sh --test-key
 ```
 
 Paste your saved copy when prompted. The test compares it against the key file, points out stray whitespace picked up during copying, and then proves the pasted key actually unlocks the repository.
+
+## Bootloader backup
+
+A file-level backup cannot see the partition table, the boot code at the start of the disk, or UEFI firmware entries, so before every backup the script dumps them into `BOOTLOADER_BACKUP_DIR` along with the filesystem UUIDs, GRUB config copies, and the detected boot mode. That folder is always included in the snapshot, even when `BACKUP_PATHS` is a narrow list.
+
+The folder also contains `RESTORE-NOTES.txt`: step-by-step recovery options written for hosting at Infomaniak (snapshot restore, rescue mode repair, and full rebuild), regenerated with the system's current disk names and UUIDs on every run. The notes are intentionally not duplicated in this README; they live inside every backup, next to the data they describe. To read them without doing a restore:
+
+```bash
+restic -r <your-repository> --password-file <key-file> dump latest /var/lib/restic/bootloader/RESTORE-NOTES.txt
+```
 
 ## Requirements
 
@@ -113,6 +124,7 @@ Everything is stored in `/etc/restic/backup.conf`:
 | `ALERT_TO` | Destination (to) address for alert emails | `root@<hostname>` |
 | `SMTP2GO_API_KEY_FILE` | Root-only file holding the smtp2go API key | `/etc/restic/smtp2go_api_key` |
 | `SMTP2GO_API_URL` | smtp2go send endpoint | `https://api.smtp2go.com/v3/email/send` |
+| `BOOTLOADER_BACKUP_DIR` | Folder refreshed before each backup with bootloader dumps and restore notes | `/var/lib/restic/bootloader` |
 
 The file is safe to hand-edit. Changes take effect on the next timer run.
 
