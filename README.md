@@ -2,12 +2,16 @@
 
 Automated daily backups to Google Drive using [restic](https://restic.net/) and [rclone](https://rclone.org/), with email alerts sent through the [smtp2go](https://www.smtp2go.com/) HTTP API when something goes wrong.
 
+Backups are encrypted on your machine before anything is uploaded. Google only ever stores scrambled data it cannot read.
+
 ## What it does
 
+- Encrypts every backup locally with a key you choose during install, so Google Drive never sees readable data
 - Backs up your chosen paths to a restic repository on Google Drive every day
 - Prunes old snapshots automatically using a keep-daily / keep-weekly / keep-monthly policy
 - Emails you when a backup or prune fails
 - Runs a twice-daily watchdog that emails you if no backup has succeeded in N days (the failure mode you would otherwise never notice)
+- Checks the Google Drive connection, the repository, and alert delivery during install, with plain troubleshooting steps when something fails
 
 ## How it works
 
@@ -15,19 +19,41 @@ Three small bash scripts, wired together by systemd timers:
 
 | Script | Purpose | Schedule |
 | ------ | ------- | -------- |
-| `install.sh` | Interactive setup: asks questions, writes config, installs everything | Run manually |
+| `install.sh` | Interactive setup: asks questions, verifies connections, installs everything | Run manually |
 | `restic-backup.sh` | Runs the backup and prune, alerts on failure, records success time | Daily (systemd timer) |
 | `restic-check-stale.sh` | Alerts if the last successful backup is older than the limit | 09:00 and 21:00 daily |
 
-All configuration lives in `/etc/restic/backup.conf`. Secrets (the restic passphrase and the smtp2go API key) live in separate root-only files with `600` permissions.
+All configuration lives in `/etc/restic/backup.conf`. Secrets (the encryption key and the smtp2go API key) live in separate root-only files with `600` permissions.
 
 Alert emails are sent over HTTPS to the smtp2go API using an API key. No SMTP connection, username, or password is involved.
+
+## Encryption and your key
+
+restic encrypts everything (file contents, names, and metadata) with AES-256 on your machine, using the encryption key you enter during install. Encryption happens before upload, so Google Drive only stores ciphertext.
+
+The key is stored in a root-only file, `/etc/restic/passphrase` by default. View it in the console with:
+
+```bash
+sudo cat /etc/restic/passphrase; echo
+```
+
+(the `; echo` just adds a line break so your shell prompt does not stick to the end of the key)
+
+**Back the key up somewhere off the machine**: a password manager, or a printed copy in a safe place. Without the key the backups are permanently unreadable. There is no reset, and nobody (including Google) can recover the data for you. If the machine dies and the key only lived there, the backups die with it.
+
+To make sure the copy you saved is correct (no copy/paste mistakes), test it at any time:
+
+```bash
+sudo bash ./install.sh --test-key
+```
+
+Paste your saved copy when prompted. The test compares it against the key file, points out stray whitespace picked up during copying, and then proves the pasted key actually unlocks the repository.
 
 ## Requirements
 
 - A Linux system with systemd
 - `restic`, `rclone`, and `curl` installed and in `PATH`
-- An rclone remote configured for your Google Drive (run `rclone config`, name it `gdrive` or adjust the repository path during install)
+- An rclone remote configured for your Google Drive **as root** (run `sudo rclone config`, name it `gdrive` or adjust the repository path during install)
 - A free or paid [smtp2go](https://www.smtp2go.com/) account with:
   - An API key (dashboard: Settings, then API Keys)
   - A verified sender address or domain matching the from-address you configure
@@ -45,7 +71,15 @@ The installer asks for:
 1. Paths to back up and the restic repository location
 2. Retention policy (how many daily, weekly, monthly snapshots to keep)
 3. The source (from) and destination (to) email addresses for alerts
-4. The restic passphrase and the smtp2go API key (hidden input, stored in root-only files)
+4. The encryption key for your backups and the smtp2go API key (hidden input, stored in root-only files)
+
+It then verifies the whole chain before finishing:
+
+- The rclone remote exists and can reach Google Drive
+- The restic repository can be created, or unlocked with your key if it already exists
+- smtp2go accepts a real test alert email (optional, recommended)
+
+Every failed check prints plain troubleshooting steps. The installer ends with a reminder to back up your encryption key and an offer to test your saved copy on the spot.
 
 Re-run `sudo bash ./install.sh` at any time to change settings. Your previous answers are offered as the defaults.
 
@@ -57,7 +91,7 @@ Everything is stored in `/etc/restic/backup.conf`:
 | -------- | ------- | ------- |
 | `BACKUP_PATHS` | Space-separated list of paths to back up | `/` |
 | `RESTIC_REPOSITORY` | Where backups are stored | `rclone:gdrive:backups/<hostname>` |
-| `RESTIC_PASSWORD_FILE` | Root-only file holding the restic passphrase | `/etc/restic/passphrase` |
+| `RESTIC_PASSWORD_FILE` | Root-only file holding the encryption key | `/etc/restic/passphrase` |
 | `EXCLUDE_FILE` | Paths restic should skip | `/etc/restic/excludes` |
 | `STATE_FILE` | Timestamp of the last successful backup | `/var/lib/restic/last_success` |
 | `LOG_FILE` | Where backup output is logged | `/var/log/restic-backup.log` |
@@ -82,7 +116,19 @@ You will get an email when:
 - A prune fails
 - The watchdog finds no successful backup within `STALE_MAX_DAYS` days
 
-Note: smtp2go only delivers mail from senders you have verified. Verify your from-address (or its whole domain) in the smtp2go dashboard before relying on alerts.
+Note: smtp2go only delivers mail from senders you have verified. Verify your from-address (or its whole domain) in the smtp2go dashboard before relying on alerts. The installer's test email catches this early.
+
+## Troubleshooting
+
+The installer runs these checks itself and prints the same guidance when they fail.
+
+**rclone remote not found.** rclone configs are per user, and the backup runs as root. If you configured the remote as your normal user, root cannot see it. Run `sudo rclone config` to create it for root, or copy your config: `sudo mkdir -p /root/.config/rclone && sudo cp ~/.config/rclone/rclone.conf /root/.config/rclone/`
+
+**rclone cannot reach Google Drive.** Usually an expired Google authorization. Refresh with `sudo rclone config reconnect gdrive:` and confirm basic connectivity with `curl -sI https://www.googleapis.com | head -1`
+
+**restic cannot open the repository.** If the error mentions "already initialized" or "wrong password", the repository exists but your current key does not unlock it; restore the original key file. Otherwise check the repository path for typos and re-check the rclone steps above.
+
+**smtp2go rejects the test email.** Check the API key (smtp2go dashboard: Settings, then API Keys), make sure the from-address is a verified sender or on a verified domain, and confirm the machine can reach `https://api.smtp2go.com`. Backups still run without alerts, but you will not hear about failures.
 
 ## Testing
 
@@ -93,6 +139,7 @@ To verify a change or a fresh install:
 3. Run a manual backup and watch the output: `sudo /usr/local/bin/restic-backup.sh`
 4. Confirm a snapshot exists: `sudo restic -r <your-repository> snapshots` (or source the config first)
 5. Test alert delivery end to end: temporarily set `STALE_MAX_DAYS="0"` in `/etc/restic/backup.conf`, run `sudo /usr/local/bin/restic-check-stale.sh`, confirm the email arrives, then set the value back
+6. Verify your saved copy of the encryption key: `sudo bash ./install.sh --test-key`
 
 ## Restoring
 
@@ -116,6 +163,8 @@ sudo systemctl daemon-reload
 sudo rm /usr/local/bin/restic-backup.sh /usr/local/bin/restic-check-stale.sh
 sudo rm -r /etc/restic /var/lib/restic   # removes config and secrets; snapshots on Google Drive are untouched
 ```
+
+Keep a copy of the encryption key even after uninstalling if the snapshots on Google Drive still exist. You will need it to read them.
 
 ## Contributing
 
