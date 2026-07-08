@@ -251,6 +251,173 @@ json_escape() {
     printf '%s' "$s"
 }
 
+rclone_remote_exists() {
+    # True when the named rclone remote is configured for the CURRENT
+    # user (which is root, since this installer runs under sudo).
+    # rclone listremotes prints one remote per line, each ending in ":".
+    # grep -qx matches a whole line quietly (exit code only, no output).
+    rclone listremotes 2>/dev/null | grep -qx "$1:"
+}
+
+find_user_rclone_configs() {
+    # Print candidate rclone.conf files belonging to normal users, one
+    # path per line. rclone configurations are per user, so a remote
+    # created before running "sudo bash ./install.sh" usually lives in
+    # the invoking user's home, not root's.
+    # $SUDO_USER is set by sudo to the name of the user who invoked it;
+    # their config is the most likely candidate, so it is printed first.
+    local seen="" home_dir conf
+    if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]]; then
+        # getent looks the user up in the password database; field 6 of
+        # the colon-separated record is their home directory.
+        home_dir="$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)"
+        conf="$home_dir/.config/rclone/rclone.conf"
+        if [[ -n "$home_dir" && -s "$conf" ]]; then
+            echo "$conf"
+            seen="$conf"
+        fi
+    fi
+    # Also scan every home directory, in case the remote was set up by
+    # a different user. -s is true for files that exist and are not
+    # empty, so an unmatched glob pattern simply tests false.
+    for conf in /home/*/.config/rclone/rclone.conf; do
+        if [[ -s "$conf" && "$conf" != "$seen" ]]; then
+            echo "$conf"
+        fi
+    done
+}
+
+offer_rclone_remote_fixes() {
+    # Interactive repair loop for a missing rclone remote. Keeps offering
+    # fixes and re-checking until the remote exists (returns 0) or the
+    # user gives up (returns 1).
+    # Usage: offer_rclone_remote_fixes REMOTE_NAME
+    local remote="$1" choice pick n i remotes conf
+    local conf_list=()
+    while true; do
+        echo
+        echo "rclone remotes visible to root right now:"
+        remotes="$(rclone listremotes 2>/dev/null)"
+        if [[ -n "$remotes" ]]; then
+            echo "$remotes" | sed 's/^/    /'
+        else
+            echo "    (none)"
+        fi
+        echo
+        # Rebuild the candidate list on every pass, since a fix attempt
+        # may have created or copied a config. A plain read loop is used
+        # instead of process substitution, which minimal environments
+        # can lack.
+        conf_list=()
+        while IFS= read -r conf; do
+            if [[ -n "$conf" ]]; then
+                conf_list+=("$conf")
+            fi
+        done <<< "$(find_user_rclone_configs)"
+        echo "How do you want to fix the missing remote \"$remote\"?"
+        if [[ ${#conf_list[@]} -gt 0 ]]; then
+            echo "  1) Copy an existing user's rclone config to root. Found:"
+            for i in "${!conf_list[@]}"; do
+                echo "       $((i+1))) ${conf_list[$i]}"
+            done
+        else
+            echo "  1) Copy an existing user's rclone config to root (none found under /home)"
+        fi
+        echo "  2) Run 'rclone config' now to create it"
+        echo "     (choose: n for new remote, name it exactly \"$remote\", storage type \"drive\")"
+        echo "  3) Give up for now"
+        read -rp "Choose [1/2/3]: " choice
+        case "$choice" in
+            1)
+                if [[ ${#conf_list[@]} -eq 0 ]]; then
+                    echo "There is no user rclone.conf to copy. Try option 2 instead."
+                    continue
+                fi
+                if [[ ${#conf_list[@]} -eq 1 ]]; then
+                    pick="${conf_list[0]}"
+                else
+                    read -rp "Copy which one? [1-${#conf_list[@]}]: " n
+                    if ! [[ "$n" =~ ^[0-9]+$ ]] || (( n < 1 || n > ${#conf_list[@]} )); then
+                        echo "Invalid choice."
+                        continue
+                    fi
+                    pick="${conf_list[$((n-1))]}"
+                fi
+                # Never clobber an existing root config silently: it may
+                # hold other remotes that would be lost.
+                if [[ -s /root/.config/rclone/rclone.conf ]]; then
+                    read -rp "root already has an rclone config; REPLACE it (its current remotes are lost)? [y/N]: " n
+                    if [[ ! "$n" =~ ^[Yy]$ ]]; then
+                        continue
+                    fi
+                fi
+                # chmod 600 because the copied file contains the Google
+                # authorization tokens.
+                if mkdir -p /root/.config/rclone \
+                    && cp "$pick" /root/.config/rclone/rclone.conf \
+                    && chmod 600 /root/.config/rclone/rclone.conf; then
+                    echo "Copied $pick to /root/.config/rclone/rclone.conf"
+                else
+                    echo "Copy failed (see the error above)."
+                    continue
+                fi
+                ;;
+            2)
+                # rclone config is its own interactive tool; hand the
+                # terminal over to it and re-check when it exits.
+                rclone config || true
+                ;;
+            3)
+                return 1
+                ;;
+            *)
+                echo "Please answer 1, 2, or 3."
+                continue
+                ;;
+        esac
+        if rclone_remote_exists "$remote"; then
+            echo "Remote \"$remote\" is now configured."
+            return 0
+        fi
+        echo "Remote \"$remote\" is still not configured; let's try again."
+    done
+}
+
+verify_rclone_reachability() {
+    # Prove the rclone remote can actually reach Google Drive, offering
+    # fixes in a loop when it cannot. Returns 0 on success, 1 on give-up.
+    # Usage: verify_rclone_reachability REMOTE_NAME
+    local remote="$1" out choice
+    while true; do
+        printf 'Checking "%s" can reach Google Drive... ' "$remote"
+        # rclone lsd lists top-level folders. Only success matters, so
+        # the listing is discarded and errors are captured. The redirect
+        # order matters: 2>&1 first points errors at the capture, then
+        # 1>/dev/null discards the normal listing.
+        if out=$(rclone lsd "${remote}:" 2>&1 1>/dev/null); then
+            echo "OK"
+            return 0
+        fi
+        echo "FAIL"
+        echo "rclone said:"
+        echo "$out" | head -5 | sed 's/^/    /'
+        echo
+        echo "How do you want to proceed?"
+        echo "  1) Refresh the Google authorization (runs: rclone config reconnect ${remote}:)"
+        echo "  2) Open the rclone configuration tool (runs: rclone config)"
+        echo "  3) Just test again"
+        echo "  4) Give up for now"
+        read -rp "Choose [1/2/3/4]: " choice
+        case "$choice" in
+            1) rclone config reconnect "${remote}:" || true ;;
+            2) rclone config || true ;;
+            3) : ;;
+            4) return 1 ;;
+            *) echo "Please answer 1, 2, 3, or 4." ;;
+        esac
+    done
+}
+
 inspect_previous_config() {
     # Look at the just-loaded previous config and work out, into globals:
     #   LEGACY_SMTP_FOUND - "yes" if it still has old SMTP alert settings
@@ -591,16 +758,18 @@ if [[ "$RESTIC_REPOSITORY" == rclone:* ]]; then
     RCLONE_REMOTE="${RCLONE_REMOTE%%:*}"          # keep only the remote name
 
     printf 'Checking rclone remote "%s" is configured... ' "$RCLONE_REMOTE"
-    # rclone listremotes prints one remote per line, each ending in ":".
-    # grep -qx matches a whole line quietly (exit code only, no output).
-    if rclone listremotes 2>/dev/null | grep -qx "${RCLONE_REMOTE}:"; then
+    if rclone_remote_exists "$RCLONE_REMOTE"; then
         echo "OK"
     else
         echo "FAIL"
-        cat <<TROUBLE
+        echo "No rclone remote named \"$RCLONE_REMOTE\" is configured for the root user."
+        echo "(rclone configurations are per user, so a remote created as your normal user is invisible to root)"
+        # Offer to fix it right here: copy a user's config to root, or
+        # run rclone config interactively, re-checking after each try.
+        if ! offer_rclone_remote_fixes "$RCLONE_REMOTE"; then
+            cat <<TROUBLE
 
-No rclone remote named "$RCLONE_REMOTE" is configured for the root user.
-Troubleshooting:
+To fix it by hand later:
   1. List the remotes root can see:  sudo rclone listremotes
   2. rclone configs are PER USER. If you configured the remote as your
      normal user, root cannot see it. Either create it for root with
@@ -611,23 +780,16 @@ Troubleshooting:
      (choose "drive" for Google Drive and follow the prompts)
 Fix the remote, then re-run this installer.
 TROUBLE
-        exit 1
+            exit 1
+        fi
     fi
 
-    printf 'Checking "%s" can reach Google Drive... ' "$RCLONE_REMOTE"
-    # rclone lsd lists top-level folders. We only care whether it works,
-    # so stdout is discarded and stderr is captured for the error message.
-    # The redirect order matters: 2>&1 first sends errors to the capture,
-    # then 1>/dev/null discards the normal listing.
-    if RCLONE_OUT=$(rclone lsd "${RCLONE_REMOTE}:" 2>&1 1>/dev/null); then
-        echo "OK"
-    else
-        echo "FAIL"
-        echo "rclone said:"
-        echo "$RCLONE_OUT" | head -5 | sed 's/^/    /'
+    # Now prove the remote actually reaches Google Drive, again with
+    # interactive fixes on failure.
+    if ! verify_rclone_reachability "$RCLONE_REMOTE"; then
         cat <<TROUBLE
 
-Troubleshooting:
+To fix it by hand later:
   1. Expired or revoked Google authorization is the most common cause.
      Refresh it with:  sudo rclone config reconnect ${RCLONE_REMOTE}:
   2. Try the listing yourself to see the full error:
