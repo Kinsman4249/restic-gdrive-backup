@@ -28,6 +28,8 @@
 #
 # Extra modes:
 #   sudo bash ./install.sh --test-key    only run the encryption key test
+#   sudo bash ./install.sh --restore     guided file restore from a snapshot
+#                                        (never touches boot or network files)
 #
 # Safe to re-run at any time to reconfigure: existing values in CONFIG_FILE
 # win over the built-in defaults, and custom lines you added to the config
@@ -58,6 +60,8 @@ LEGACY_VARS="SMTP2GO_HOST SMTP2GO_PORT SMTP2GO_USER SMTP2GO_PASS_FILE"
 MODE="install"
 if [[ "${1:-}" == "--test-key" ]]; then
     MODE="test-key"
+elif [[ "${1:-}" == "--restore" ]]; then
+    MODE="restore"
 fi
 
 # $EUID is the numeric id of the user running this script; 0 means root.
@@ -519,6 +523,142 @@ test_encryption_key() {
     fi
 }
 
+restore_files() {
+    # Guided file restore from the restic repository, built to be SAFE on
+    # a freshly installed system: when restoring straight into place, a
+    # set of protected paths is never overwritten, so the restore cannot
+    # break the machine's boot setup, network access, identity, or the
+    # backup configuration this installer just created.
+    # Use this when the fresh system already boots fine and you just want
+    # the data back (the case where a bootloader restore is not possible
+    # or not worth the trouble).
+    local snap choice target_mode target_dir yn include_paths p
+    local protected=() args=()
+
+    echo
+    echo "--- Restore files from backup ---"
+
+    # Bail out gracefully when the repository has no snapshots yet.
+    # "restic snapshots latest" only succeeds when at least one exists.
+    if ! restic snapshots latest >/dev/null 2>&1; then
+        echo "No snapshots found in $RESTIC_REPOSITORY - nothing to restore yet."
+        return 1
+    fi
+
+    echo "Snapshots in the repository (newest last):"
+    restic snapshots 2>/dev/null | tail -n 12 | sed 's/^/    /'
+    echo
+    read -rp "Snapshot to restore [latest]: " snap
+    snap="${snap:-latest}"
+
+    # Paths an IN-PLACE restore must never overwrite, and why:
+    protected=(
+        "$BOOTLOADER_BACKUP_DIR"          # bootloader dumps and notes for THIS machine
+        "/etc/restic"                     # the current backup config and keys
+        "/boot"                           # kernels and bootloader of the running system
+        "/etc/fstab"                      # mount table matching the CURRENT disk UUIDs
+        "/etc/crypttab"                   # encrypted-disk mappings for the current disk
+        "/etc/machine-id"                 # unique identity of this installation
+        "/etc/netplan"                    # network settings: restoring another
+        "/etc/network"                    # machine's addresses onto this one can
+        "/etc/systemd/network"            # cut off your SSH access
+        "/etc/NetworkManager/system-connections"
+    )
+
+    echo
+    echo "What do you want restored?"
+    echo "  1) Everything in the snapshot"
+    echo "  2) Specific paths only (you type them)"
+    read -rp "Choose [1/2]: " choice
+    include_paths=""
+    if [[ "$choice" == "2" ]]; then
+        read -rp "Paths to restore (space-separated, e.g. /home /var/www): " include_paths
+        if [[ -z "$include_paths" ]]; then
+            echo "Nothing typed; restoring everything instead."
+        fi
+    fi
+
+    echo
+    echo "Where should the files go?"
+    echo "  1) Straight into place on this system."
+    echo "     Overwrites matching files, never deletes extra ones, and always"
+    echo "     skips the protected paths (boot files, fstab, network settings,"
+    echo "     machine identity, current backup config, bootloader dumps)."
+    echo "  2) A staging folder to review first."
+    echo "     Nothing on the live system changes, and nothing is skipped, so"
+    echo "     this is also how to grab reference copies of protected files"
+    echo "     like the old fstab."
+    read -rp "Choose [1/2]: " target_mode
+    if [[ "$target_mode" == "2" ]]; then
+        target_dir="/root/restore-$(date +%Y%m%d-%H%M%S)"
+        read -rp "Staging folder [$target_dir]: " choice
+        target_dir="${choice:-$target_dir}"
+        if ! mkdir -p "$target_dir"; then
+            echo "Could not create $target_dir - restore cancelled."
+            return 1
+        fi
+    else
+        target_dir="/"
+    fi
+
+    # Build the restic command as an array so every argument stays intact.
+    args=(restore "$snap" --target "$target_dir" --verbose)
+    if [[ "$target_dir" == "/" ]]; then
+        # Protective excludes only apply in place. In restic, excludes win
+        # over includes, so even an explicitly typed protected path stays
+        # safe (use the staging folder to retrieve those).
+        for p in "${protected[@]}"; do
+            args+=(--exclude "$p")
+        done
+    fi
+    if [[ -n "$include_paths" ]]; then
+        # Intentional word splitting: each typed path becomes an include.
+        # shellcheck disable=SC2086
+        for p in $include_paths; do
+            args+=(--include "$p")
+        done
+    fi
+
+    echo
+    echo "About to run:"
+    echo "    restic ${args[*]}"
+    if [[ "$target_dir" == "/" ]]; then
+        echo "This restores INTO THE LIVE SYSTEM (protected paths excluded)."
+    fi
+    read -rp "Proceed? [y/N]: " yn
+    if [[ ! "$yn" =~ ^[Yy]$ ]]; then
+        echo "Restore cancelled - nothing was changed."
+        return 1
+    fi
+
+    # Run restic directly (not captured) so its progress is visible.
+    if restic "${args[@]}"; then
+        echo
+        echo "Restore finished."
+        if [[ "$target_dir" == "/" ]]; then
+            cat <<'AFTER'
+After an in-place restore:
+  - Restored service configs are on disk, but running services still
+    use their old settings. Run: systemctl daemon-reload, restart the
+    affected services, or reboot once you have looked things over.
+  - The protected paths were NOT touched: boot files, fstab, network
+    settings, machine identity, the backup config, and the bootloader
+    dumps are all exactly as the installer left them.
+  - Old copies of protected files remain readable from the snapshot,
+    for example:  restic dump latest /etc/fstab
+AFTER
+        else
+            echo "Files are staged under $target_dir (snapshot paths mirrored inside)."
+            echo "Review them and move what you need, for example:"
+            echo "    rsync -a $target_dir/home/ /home/"
+        fi
+        return 0
+    else
+        echo "Restore FAILED - review the restic output above."
+        return 1
+    fi
+}
+
 # Make sure every required tool is present (offering to install missing
 # ones) before either mode below does any real work.
 ensure_dependencies
@@ -536,6 +676,24 @@ if [[ "$MODE" == "test-key" ]]; then
     source "$CONFIG_FILE"
     export RESTIC_REPOSITORY RESTIC_PASSWORD_FILE
     test_encryption_key
+    exit $?
+fi
+
+# =============================================================================
+# Restore-only mode: sudo bash ./install.sh --restore
+# =============================================================================
+if [[ "$MODE" == "restore" ]]; then
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        echo "Missing $CONFIG_FILE - run the installer first." >&2
+        exit 1
+    fi
+    # Load the saved settings, then run only the guided restore and exit.
+    # shellcheck disable=SC1090
+    source "$CONFIG_FILE"
+    # Older configs may predate this setting; fall back to the default.
+    : "${BOOTLOADER_BACKUP_DIR:=/var/lib/restic/bootloader}"
+    export RESTIC_REPOSITORY RESTIC_PASSWORD_FILE
+    restore_files
     exit $?
 fi
 
@@ -1004,5 +1162,20 @@ if [[ "$yn" =~ ^[Yy]$ ]]; then
 fi
 echo
 echo "You can re-run the key test anytime with: sudo bash ./install.sh --test-key"
+
+# --- Offer a guided restore when the repository already has history ---
+# This is the rebuild-after-disaster path: on a fresh system pointed at
+# an existing repository, the natural next step is pulling files back.
+if restic snapshots latest >/dev/null 2>&1; then
+    echo
+    echo "This repository already contains backups from before."
+    read -rp "Restore files from a snapshot now? [y/N]: " yn
+    if [[ "$yn" =~ ^[Yy]$ ]]; then
+        restore_files
+    else
+        echo "You can restore anytime with: sudo bash ./install.sh --restore"
+    fi
+fi
+
 echo
 echo "Done. Run a manual backup test with: $BIN_DIR/restic-backup.sh"
