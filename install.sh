@@ -9,20 +9,22 @@
 # your saved copy.
 #
 # What this script does, in order:
-#   1. Loads any existing configuration so your previous answers become
+#   1. Checks that restic, rclone, curl, and systemd are present, and
+#      offers to install missing tools with your package manager.
+#   2. Loads any existing configuration so your previous answers become
 #      the defaults for each question.
-#   2. Asks what to back up, where the restic repository lives, and which
+#   3. Asks what to back up, where the restic repository lives, and which
 #      source and destination email addresses to use for alerts.
-#   3. Stores the encryption key and the smtp2go API key in root-only files
+#   4. Stores the encryption key and the smtp2go API key in root-only files
 #      (hidden input, never echoed to the screen).
-#   4. Writes the combined configuration to /etc/restic/backup.conf.
-#   5. Checks the Google Drive connection (rclone), with troubleshooting
+#   5. Writes the combined configuration to /etc/restic/backup.conf.
+#   6. Checks the Google Drive connection (rclone), with troubleshooting
 #      steps if it fails.
-#   6. Installs the backup and staleness-check scripts to /usr/local/bin.
-#   7. Initializes or verifies the encrypted restic repository.
-#   8. Installs and starts systemd timers so everything runs automatically.
-#   9. Offers to send a test alert email through the smtp2go API.
-#  10. Reminds you to back up your encryption key and offers to test a copy.
+#   7. Installs the backup and staleness-check scripts to /usr/local/bin.
+#   8. Initializes or verifies the encrypted restic repository.
+#   9. Installs and starts systemd timers so everything runs automatically.
+#  10. Offers to send a test alert email through the smtp2go API.
+#  11. Reminds you to back up your encryption key and offers to test a copy.
 #
 # Extra modes:
 #   sudo bash ./install.sh --test-key    only run the encryption key test
@@ -66,22 +68,143 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
-# Make sure the tools this project depends on are installed:
-#   restic - the backup program itself (also does the encryption)
-#   rclone - lets restic talk to Google Drive
-#   curl   - used to call the smtp2go HTTP API when sending alert emails
-# "command -v" prints the path of a command if it exists, or fails if not.
-for cmd in restic rclone curl; do
-    if ! command -v "$cmd" >/dev/null 2>&1; then
-        echo "Required command '$cmd' is not installed or not in PATH." >&2
-        echo "Install it and re-run this script." >&2
-        exit 1
-    fi
-done
-
 # =============================================================================
 # Helper functions (defined up front so every mode below can use them)
 # =============================================================================
+
+manual_install_help() {
+    # Print per-tool installation pointers, used when the package manager
+    # is unknown, the user declines the automatic install, or a package
+    # is not available in the distro's repositories.
+    # Usage: manual_install_help TOOL [TOOL...]
+    local t
+    echo
+    echo "Manual installation pointers:"
+    for t in "$@"; do
+        case "$t" in
+            restic)
+                cat <<'HELP'
+  restic:
+    - Debian/Ubuntu:    apt-get install restic
+    - RHEL/Alma/Rocky:  enable EPEL first (dnf install epel-release),
+                        then: dnf install restic
+    - Any distro:       download a static binary from
+                        https://github.com/restic/restic/releases
+                        and place it at /usr/local/bin/restic (chmod 755)
+HELP
+                ;;
+            rclone)
+                cat <<'HELP'
+  rclone:
+    - Debian/Ubuntu:    apt-get install rclone
+    - Distro packages can lag; current builds are at
+      https://rclone.org/downloads/ (their install script is at
+      https://rclone.org/install.sh, review it before running as root)
+HELP
+                ;;
+            curl)
+                cat <<'HELP'
+  curl:
+    - In every distro's base repository, e.g.
+      apt-get install curl  /  dnf install curl
+HELP
+                ;;
+        esac
+    done
+    echo "Install the missing tools, then re-run this installer."
+}
+
+ensure_dependencies() {
+    # Check that the tools this project needs are present, and offer to
+    # install any that are missing using the system's package manager:
+    #   restic - the backup program itself (also does the encryption)
+    #   rclone - lets restic talk to Google Drive
+    #   curl   - used to call the smtp2go HTTP API when sending alert emails
+    # systemd is required too, but a script cannot sensibly install it,
+    # so it is only checked.
+    # "command -v" prints the path of a command if it exists, or fails.
+    if ! command -v systemctl >/dev/null 2>&1; then
+        echo "This project schedules backups with systemd, but systemctl was not found." >&2
+        echo "Use a Linux distribution that runs systemd (standard Infomaniak images do)." >&2
+        exit 1
+    fi
+
+    local cmd missing=()
+    for cmd in restic rclone curl; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            missing+=("$cmd")
+        fi
+    done
+
+    if [[ ${#missing[@]} -eq 0 ]]; then
+        # Everything is already here; show exactly what will be used.
+        echo "Dependencies found:"
+        echo "  restic: $(restic version 2>/dev/null | head -1)"
+        echo "  rclone: $(rclone version 2>/dev/null | head -1)"
+        echo "  curl:   $(curl --version 2>/dev/null | head -1)"
+        return 0
+    fi
+
+    echo "Missing required tools: ${missing[*]}"
+
+    # Detect the system's package manager. Conveniently, the command
+    # names double as the package names for restic, rclone, and curl on
+    # every package manager listed here.
+    local pm=""
+    for cmd in apt-get dnf yum zypper pacman; do
+        if command -v "$cmd" >/dev/null 2>&1; then
+            pm="$cmd"
+            break
+        fi
+    done
+
+    if [[ -z "$pm" ]]; then
+        echo "No supported package manager found (looked for apt-get, dnf, yum, zypper, pacman)."
+        manual_install_help "${missing[@]}"
+        exit 1
+    fi
+
+    local yn
+    read -rp "Install ${missing[*]} now with $pm? [Y/n]: " yn
+    if [[ "$yn" =~ ^[Nn]$ ]]; then
+        manual_install_help "${missing[@]}"
+        exit 1
+    fi
+
+    # Run the right install command. Every branch is non-interactive so
+    # the installer cannot stall on a hidden package-manager prompt.
+    case "$pm" in
+        apt-get)
+            # Refresh package lists first; fresh servers often have none.
+            apt-get update -qq
+            DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"
+            ;;
+        dnf)    dnf install -y "${missing[@]}" ;;
+        yum)    yum install -y "${missing[@]}" ;;
+        zypper) zypper --non-interactive install "${missing[@]}" ;;
+        pacman) pacman -Sy --noconfirm --needed "${missing[@]}" ;;
+    esac
+
+    # Trust nothing: re-check that every tool is now actually usable.
+    local still_missing=()
+    for cmd in "${missing[@]}"; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            still_missing+=("$cmd")
+        fi
+    done
+    if [[ ${#still_missing[@]} -gt 0 ]]; then
+        echo
+        echo "FAIL - still missing after the install attempt: ${still_missing[*]}"
+        echo "(on RHEL-family systems restic usually needs the EPEL repository first)"
+        manual_install_help "${still_missing[@]}"
+        exit 1
+    fi
+
+    echo "Dependencies installed:"
+    echo "  restic: $(restic version 2>/dev/null | head -1)"
+    echo "  rclone: $(rclone version 2>/dev/null | head -1)"
+    echo "  curl:   $(curl --version 2>/dev/null | head -1)"
+}
 
 ask() {
     # Ask an interactive question with a default value.
@@ -228,6 +351,10 @@ test_encryption_key() {
         return 1
     fi
 }
+
+# Make sure every required tool is present (offering to install missing
+# ones) before either mode below does any real work.
+ensure_dependencies
 
 # =============================================================================
 # Key-test-only mode: sudo bash ./install.sh --test-key
