@@ -142,6 +142,42 @@ You will get an email when:
 
 Note: smtp2go only delivers mail from senders you have verified. Verify your from-address (or its whole domain) in the smtp2go dashboard before relying on alerts. The installer's test email catches this early.
 
+## Monitoring a backup
+
+The scheduled backup runs in the background with no terminal attached. Ways to watch it:
+
+```bash
+# Is a backup running right now, and when is the next one due?
+systemctl status restic-backup.service
+systemctl list-timers restic-backup.timer
+
+# Follow the log as the script writes it
+sudo tail -f /var/log/restic-backup.log
+
+# The same lines, through systemd's journal
+sudo journalctl -fu restic-backup.service
+
+# Watch the bytes actually landing in Google Drive (refreshes every 60 seconds)
+sudo watch -n 60 rclone size gdrive:backups/<hostname>
+
+# Inspect the repository between runs
+sudo restic -r rclone:gdrive:backups/<hostname> --password-file /etc/restic/passphrase snapshots
+sudo restic -r rclone:gdrive:backups/<hostname> --password-file /etc/restic/passphrase stats
+```
+
+Two things to know:
+
+- The backup script collects restic's output and writes it to the log when each stage finishes, so `tail -f` shows start and completion lines rather than a live percentage. The `rclone size` watch is the best live view of a scheduled run's transfer.
+- For a live progress bar, run a backup by hand in a terminal. Avoid doing this while the scheduled run is active, or restic will complain that the repository is locked:
+
+```bash
+sudo bash -c 'source /etc/restic/backup.conf \
+  && export RESTIC_REPOSITORY RESTIC_PASSWORD_FILE \
+  && restic backup $BACKUP_PATHS --exclude-file="$EXCLUDE_FILE" --verbose'
+```
+
+A hand-run backup creates a real snapshot, but it does not update the last-success timestamp, prune old snapshots, or send failure alerts; the scheduled script handles those. The first backup uploads everything and can take hours; later runs only upload changes and are usually quick.
+
 ## Troubleshooting
 
 The installer runs these checks itself and prints the same guidance when they fail.
