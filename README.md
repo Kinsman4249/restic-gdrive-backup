@@ -169,6 +169,14 @@ To verify a change or a fresh install:
 
 ## Restoring
 
+The installer includes a guided restore for the common disaster case where the fresh system already boots and you just want your files back:
+
+```bash
+sudo bash ./install.sh --restore
+```
+
+It is also offered automatically at the end of an install when the repository already contains backups. You pick a snapshot, everything or specific paths, and a destination: straight into place, or a staging folder for review. In-place restores never overwrite boot files, `/etc/fstab`, network settings, the machine identity, the backup configuration, or the bootloader dumps, so a restore cannot break the system it runs on. The staging option restores without restrictions, which is also the way to retrieve reference copies of those protected files.
+
 Backups you cannot restore are not backups. Periodically run a test restore:
 
 ```bash
