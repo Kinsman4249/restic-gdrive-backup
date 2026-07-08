@@ -1,0 +1,120 @@
+# =============================================================================
+# Release workflow
+# =============================================================================
+#
+# Bundles this project's scripts on a tag push and attaches the archives to a
+# GitHub Release. Instantiated from the release workflow template in
+# Kinsman4249/.github-private for a shell-script project: single Linux
+# builder, no compilation, just clean source archives.
+#
+# CUTTING YOUR FIRST RELEASE
+# --------------------------
+# From your local clone:
+#
+#     git tag v0.1.0
+#     git push --tags
+#
+# A new GitHub Release will appear under the "Releases" tab once the workflow
+# finishes (a couple of minutes). Bump the version for subsequent releases:
+# v0.2.0, v1.0.0, v1.0.1, etc. (See: https://semver.org)
+#
+# RUNNING MANUALLY
+# ----------------
+# Repo > Actions tab > Release > Run workflow. Enter an existing tag.
+#
+# =============================================================================
+
+name: Release
+
+on:
+  # Auto-trigger when you push a version tag like v0.1.0 / v1.2.3.
+  push:
+    tags:
+      - 'v*.*.*'
+  # Manual fallback. Lets you re-run a release from the Actions tab.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v1.0.0). Must already exist.'
+        required: true
+        type: string
+
+# Required so the workflow can create the GitHub Release.
+permissions:
+  contents: write
+
+jobs:
+  # ===========================================================================
+  # BUILD: produces the release artifacts.
+  # ===========================================================================
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Shell scripts run anywhere, so one Linux builder is all we need.
+        os: [ubuntu-latest]
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          # On manual runs, check out the tag the user typed; otherwise the pushed tag.
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      # Shell scripts need no toolchain setup; bash is preinstalled on every
+      # runner. We just bundle the repo into clean source archives.
+      - name: Bundle scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          name="${{ github.event.repository.name }}-${tag}"
+          mkdir -p dist
+          # git archive produces clean source archives that match the exact tag.
+          git archive --format=tar.gz --prefix="${name}/" -o "dist/${name}.tar.gz" HEAD
+          git archive --format=zip   --prefix="${name}/" -o "dist/${name}.zip"    HEAD
+
+      # =======================================================================
+      # Upload artifacts (no edits needed below)
+      # =======================================================================
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.os }}
+          path: |
+            dist/**
+          if-no-files-found: warn
+          retention-days: 7
+
+  # ===========================================================================
+  # RELEASE: pulls every artifact from the build job and creates the Release.
+  # ===========================================================================
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts (debug)
+        shell: bash
+        run: |
+          echo "Artifacts ready to upload:"
+          find artifacts -type f -printf "  %p (%s bytes)\n" 2>/dev/null || ls -lR artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: ${{ github.event.inputs.tag || github.ref_name }}
+          # GitHub auto-generates release notes from PRs/commits since the last tag.
+          generate_release_notes: true
+          # Attach every file produced by the build job.
+          files: artifacts/**/*
+          fail_on_unmatched_files: false
