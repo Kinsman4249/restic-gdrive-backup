@@ -88,7 +88,7 @@ The installer asks for:
 
 It then verifies the whole chain before finishing:
 
-- The rclone remote exists and can reach Google Drive
+- The rclone remote exists and can reach Google Drive, with interactive fixes when it does not: listing the remotes root can see, copying your user's rclone config to root, running `rclone config` on the spot, or refreshing the Google authorization
 - The restic repository can be created, or unlocked with your key if it already exists
 - smtp2go accepts a real test alert email (optional, recommended)
 
@@ -148,9 +148,9 @@ The installer runs these checks itself and prints the same guidance when they fa
 
 **A dependency will not install.** On RHEL, Alma, or Rocky, `restic` lives in the EPEL repository: `dnf install epel-release` first, then re-run the installer. If your distro's `rclone` is too old for Google Drive, current builds are at https://rclone.org/downloads/. A static `restic` binary from https://github.com/restic/restic/releases dropped into `/usr/local/bin` also works on any distro.
 
-**rclone remote not found.** rclone configs are per user, and the backup runs as root. If you configured the remote as your normal user, root cannot see it. Run `sudo rclone config` to create it for root, or copy your config: `sudo mkdir -p /root/.config/rclone && sudo cp ~/.config/rclone/rclone.conf /root/.config/rclone/`
+**rclone remote not found.** rclone configs are per user, and the backup runs as root. If you configured the remote as your normal user, root cannot see it. The installer detects this and offers the fixes interactively (copying your user's config to root, or running `rclone config`). By hand: `sudo rclone config` to create it for root, or copy your config: `sudo mkdir -p /root/.config/rclone && sudo cp ~/.config/rclone/rclone.conf /root/.config/rclone/`
 
-**rclone cannot reach Google Drive.** Usually an expired Google authorization. Refresh with `sudo rclone config reconnect gdrive:` and confirm basic connectivity with `curl -sI https://www.googleapis.com | head -1`
+**rclone cannot reach Google Drive.** Usually an expired Google authorization. The installer offers to refresh it during the check; by hand, run `sudo rclone config reconnect gdrive:` and confirm basic connectivity with `curl -sI https://www.googleapis.com | head -1`
 
 **restic cannot open the repository.** If the error mentions "already initialized" or "wrong password", the repository exists but your current key does not unlock it; restore the original key file. Otherwise check the repository path for typos and re-check the rclone steps above.
 
