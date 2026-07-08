@@ -81,7 +81,17 @@ It then verifies the whole chain before finishing:
 
 Every failed check prints plain troubleshooting steps. The installer ends with a reminder to back up your encryption key and an offer to test your saved copy on the spot.
 
-Re-run `sudo bash ./install.sh` at any time to change settings. Your previous answers are offered as the defaults.
+Re-run `sudo bash ./install.sh` at any time to change settings. Your previous answers are offered as the defaults, and any custom lines you added to the config by hand are preserved.
+
+## Upgrading from the SMTP version
+
+If your `/etc/restic/backup.conf` was created by the old version that sent alerts over SMTP with a username and password, just re-run the installer. It detects the old settings and migrates cleanly:
+
+- Every setting you chose before (paths, repository, retention, addresses) comes back as the default answer, so pressing Enter keeps it
+- Custom lines you added to the config by hand are carried over untouched
+- The retired SMTP host, port, username, and password entries are dropped from the rewritten config
+- An smtp2go API key is required; the installer will not accept an empty one
+- The old SMTP password file is no longer used, and the installer offers to delete it securely
 
 ## Configuration reference
 
