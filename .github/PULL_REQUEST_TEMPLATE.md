@@ -27,7 +27,7 @@ How did you verify this works?
 
 - [ ] Updated `README.md` if user-visible behavior changed
 - [ ] Updated other docs (`docs/`, etc.) if relevant
-- [ ] Added an entry under `[Unreleased]` in `CHANGELOG.md` (if the project has one)
+- [ ] Added a numbered entry to `CHANGELOG.md` under the current round (if the project has one)
 
 ## Related issues
 

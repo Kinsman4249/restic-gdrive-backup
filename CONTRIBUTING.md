@@ -22,7 +22,7 @@ Open an issue using the **Feature request** template. Describe the use case befo
 2. **Make your change.** Keep changes focused - one logical change per PR.
 3. **Test it.** See the "Testing" section in the README for how to verify your change locally.
 4. **Lint it.** Run any project-specific linters or formatters before pushing.
-5. **Update documentation.** If your change alters user-visible behavior, update the README and any relevant docs (`docs/`, `CHANGELOG.md` under `[Unreleased]`, etc.).
+5. **Update documentation.** If your change alters user-visible behavior, update the README and any relevant docs (`docs/`, add a new numbered entry to `CHANGELOG.md` under the current round, etc.).
 6. **Open a PR** against `main`. Fill in the PR template.
 
 ## Coding conventions
